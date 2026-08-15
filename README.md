@@ -4,11 +4,29 @@
 
 > API 兼容任意 **OpenAI 风格多模态服务**（`/chat/completions`），完全通过环境变量配置，不绑定具体供应商。
 
+## 原理速览
+
+```
+拖图（image 块）
+   │
+   ▼
+DSH api-proxy
+   │
+   ├─ 当前模型支持图片 ──▶ 原样进模型
+   │
+   └─ 当前模型不支持图片 ──▶ 多模态模型识图（图片 → 文本描述）
+                                   │
+                                   ▼
+                          原模型收到纯文本，正常流式回复
+```
+
+**图片从不出现在原模型的上下文里**——原模型只收到一段「用户上传了图片，内容如下：…」的文本。这就是为什么主模型可以保持 DeepSeek、无需切换。
+
 ## 解决什么问题
 
-DSH 的 api-proxy 在图片消息进入模型前会硬编码拒绝「当前模型不支持图片」，且该位置**没有插件钩子**。本仓库给出两条路径：
+DSH 的 api-proxy 在图片消息进入模型前会**硬编码拒绝**「当前模型不支持图片」，且该位置**没有插件钩子**。本仓库给出两条路径：
 
-1. **host 补丁（拖图识图的核心）**：直接修改 `dsh-host-apiproxy` 的 prompt 处理器，把「拒绝图片」改成「自动识图 → 文本描述 → 继续」。
+1. **host 补丁（拖图识图的核心）**：直接修改 `dsh-host-apiproxy` 的 prompt 处理器，把「拒绝」改成「识图 → 文本 → 继续」。
 2. **agent preset（可分发部分）**：注册三个模型工具——识图 / 文生图 / 文生视频。
 
 ## 目录结构
@@ -83,13 +101,15 @@ Windows 上若不想用环境变量，可把密钥用 DPAPI 加密存到 `~/.dsh
 
 - 新建会话选「多模态模式」preset
 - **拖图到对话框发送** → 自动识图（模型收到图片的文本描述，原模型不变）
-- 工具：`multimodal_analyze_image`（识图）、`multimodal_generate_image`（生图）、`multimodal_generate_video`（生视频）
+- 工具（模型可主动调用）：`multimodal_analyze_image`（识图）、`multimodal_generate_image`（生图）、`multimodal_generate_video`（生视频）
 
 ## 架构与关键设计
 
+> 完整的状态机、数据流与逐块 diff 解析见 [docs/architecture.md](docs/architecture.md)。这里只讲最关键的三个点。
+
 ### 为什么识图要在 host 层打补丁
 
-DSH 的 api-proxy 在图片消息进模型前会硬编码拒绝「模型不支持图片」，且**无插件钩子**。因此拖图识图只能直接改 `dsh-host-apiproxy`。这是本方案的**非分发点**——`apply-multimodal-patch.ps1` 用于在 npx 缓存清理或 dsh 升级后重打。
+正因为上面那个「无插件钩子」的硬编码拒绝，拖图识图**只能直接改 `dsh-host-apiproxy`**——这是本方案的**非分发点**：`apply-multimodal-patch.ps1` 用于在 npx 缓存清理或 dsh 升级后重打。
 
 ### 异步 + 轮询（避免超时误报）
 
