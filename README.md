@@ -16,6 +16,7 @@ DSH 的 api-proxy 在图片消息进入模型前会硬编码拒绝「当前模�
 ```
 dsh-multimodal/
 ├── README.md                本文档
+├── INSTALL.md               一键安装：可直接扔给 DSH 自己执行的提示词
 ├── SUMMARY.md               实现总结（改动点 + 踩坑记录 + 设计取舍）
 ├── LICENSE                  MIT
 ├── .gitignore
@@ -36,6 +37,8 @@ dsh-multimodal/
 ```
 
 ## 安装
+
+> **懒人路径**：不想手动操作？见 [INSTALL.md](INSTALL.md)，里面有一段提示词，直接粘贴给 DSH 让它自己完成下载、复制 preset、打补丁、配置 API——你只需在它停下时提供 API Key 并手动重启网关。
 
 ### 1. 复制 preset
 
