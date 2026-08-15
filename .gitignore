@@ -1,0 +1,15 @@
+# 密钥与本地配置 —— 绝不入库
+*.enc
+*.key
+*.pem
+Get-*.ps1.local
+secrets/*.enc
+
+# Node
+node_modules/
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini

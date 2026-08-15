@@ -1,0 +1,16 @@
+{
+  "name": "dsh-llm-multimodal",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "OpenAI-compatible multimodal LLM adapter for DeepSeek Harness (image-capable).",
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-attachment": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "eventsource-parser": "^3.0.0"
+  }
+}

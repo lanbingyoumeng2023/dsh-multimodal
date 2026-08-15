@@ -1,0 +1,2 @@
+name: 多模态模式
+description: 标准编码 Agent，附带多模态工具（图像理解、文生图/图编辑、文生视频/图生视频）与拖图识图能力。API 通过环境变量 MULTIMODAL_API_KEY 配置，兼容任意 OpenAI 风格多模态服务。
