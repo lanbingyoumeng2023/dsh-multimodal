@@ -18,6 +18,10 @@ dsh-multimodal/
 ├── README.md                本文档
 ├── INSTALL.md               一键安装：可直接扔给 DSH 自己执行的提示词
 ├── SUMMARY.md               实现总结（改动点 + 踩坑记录 + 设计取舍）
+├── CHANGELOG.md             版本历史（Keep a Changelog）
+├── SECURITY.md              安全说明 + 漏洞报告渠道
+├── CONTRIBUTING.md          贡献指南
+├── .env.example             环境变量模板（无真实值）
 ├── docs/
 │   ├── architecture.md      架构详解：异步轮询状态机 + 补丁 diff 解析
 │   └── apiproxy.patch.diff  精确补丁 diff（原始 vs 补丁后）
@@ -35,8 +39,9 @@ dsh-multimodal/
 ├── patch/
 │   ├── dsh-host-apiproxy-index.js   （已打补丁的 api-proxy 完整文件，供重打参考）
 │   └── apply-multimodal-patch.ps1   补丁重打脚本（npx 缓存清理/升级后恢复）
-└── secrets/
-    └── Get-MultimodalKey.ps1        DPAPI 密钥读取脚本示例（Windows 本机可选项）
+├── secrets/
+│   └── Get-MultimodalKey.ps1        DPAPI 密钥读取脚本示例（Windows 本机可选项）
+└── .github/workflows/ci.yml  语法校验 CI（node --check）
 ```
 
 ## 安装

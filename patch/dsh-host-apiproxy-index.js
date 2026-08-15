@@ -910,9 +910,15 @@ function decodeBase64(data) {
 	if (data.length === 0 || decoded.toString("base64") !== data) throw new AttachmentError("Image upload is not canonical base64.", "INVALID_IMAGE_BASE64");
 	return new Uint8Array(decoded);
 }
-// ── 图片自动识图降级（任意 OpenAI 风格多模态服务，经环境变量配置）────────
+// ── Image auto-describe fallback (any OpenAI-style multimodal service, env-configured) ──
+// 图片自动识图降级（任意 OpenAI 风格多模态服务，经环境变量配置）。
+// When the session model does not accept image input, images in a prompt are no
+// longer rejected — each is described by the configured multimodal model and
+// replaced by text, then the normal text flow continues.
 // 当会话模型不接收图片输入时，prompt 里的图片不再被拒绝，而是逐张交给
 // 可配置的多模态模型识图，替换为文本描述后继续走正常文本流程。
+// API key never enters code or config: MULTIMODAL_API_KEY is read first; when
+// unset it falls back to a local DPAPI store (Get-MultimodalKey.ps1), cached in-process.
 // API Key 不经代码与配置：优先读环境变量 MULTIMODAL_API_KEY；未设置时
 // 回退到本机 DPAPI 存储（Get-MultimodalKey.ps1），并在进程内缓存。
 const MULTIMODAL_BASE = process.env.MULTIMODAL_BASE_URL || "https://your-multimodal-provider.example.com/v1";
@@ -2973,9 +2979,14 @@ function createApiProxy(ctx, defaults) {
 				const current = selectionFor(agent).current;
 				const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model);
 				if (modelInfo.inputModalities === void 0 || modelInfo.inputModalities.includes("image")) {
+					// Model natively accepts images: admit unchanged (sync).
 					// 当前模型本身接收图片：同步原样准入。
 					return serializeImageAdmission(agent, admit);
 				}
+				// Async + round-robin: the model does not accept images. Accept the message
+				// immediately (so a slow describe cannot trip the frontend's 30s unary timeout),
+				// describe in the background, then inject the text as a user message; external
+				// indicators can poll __multimodalDescribing for progress.
 				// 异步 + 轮询：当前模型不接收图片。立即接受消息（避免同步识图让
 				// session.prompt 超过前端 30s unary 超时而被误报），后台调多模态模型识图，
 				// 完成后把文本描述作为用户消息注入会话；外部进度指示器可轮询 __multimodalDescribing。
@@ -2991,6 +3002,8 @@ function createApiProxy(ctx, defaults) {
 						if (mode === "steer") agent.steer(message);
 						else agent.followup(message);
 					} catch (error) {
+						// Describe failed in the background: inject a text error message so the
+						// user's input is never silently dropped.
 						// 后台识图失败：注入一条文本错误消息，避免静默丢失用户输入。
 						const text = `图片自动识图失败：${error instanceof Error ? error.message : String(error)}`;
 						try {
@@ -3000,7 +3013,7 @@ function createApiProxy(ctx, defaults) {
 							});
 							if (mode === "steer") agent.steer(message);
 							else agent.followup(message);
-						} catch (e2) { /* 会话已不可用则忽略 */ }
+						} catch (e2) { /* session unavailable — ignore / 会话已不可用则忽略 */ }
 					} finally {
 						if (ws !== void 0) ws.__multimodalDescribing = false;
 					}

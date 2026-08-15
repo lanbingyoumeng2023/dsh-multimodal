@@ -1,15 +1,19 @@
-// 多模态 多模态工具插件（固化版）
+// Multimodal tools plugin (persistent agent-preset version)
+// 多模态工具插件（固化版）
 //
+// Registers three model tools:
+//   multimodal_analyze_image    image understanding (vision) — URL or local path
+//   multimodal_generate_image   text-to-image / image editing
+//   multimodal_generate_video   text-to-video / image-to-video (async task + polling)
 // 注册三个模型工具：
 //   multimodal_analyze_image    图像理解（识图）—— URL 或本地路径
 //   multimodal_generate_image   文生图 / 图编辑
 //   multimodal_generate_video   文生视频 / 图生视频（异步任务 + 轮询）
 //
+// The API key is not in code or config: at runtime it is resolved via the
+//   ~/.dsh/secrets/Get-MultimodalKey.ps1 DPAPI helper and cached in-process.
 // API Key 不在代码与配置里：运行时经 PowerShell 调用
 //   ~/.dsh/secrets/Get-MultimodalKey.ps1 解密 DPAPI 存储后取用，并缓存在进程内。
-//
-// 文档：
-// 模型目录：
 
 import { execFile } from "node:child_process";
 import { promises as fsp } from "node:fs";
