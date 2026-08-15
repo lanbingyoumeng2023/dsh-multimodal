@@ -18,6 +18,9 @@ dsh-multimodal/
 ├── README.md                本文档
 ├── INSTALL.md               一键安装：可直接扔给 DSH 自己执行的提示词
 ├── SUMMARY.md               实现总结（改动点 + 踩坑记录 + 设计取舍）
+├── docs/
+│   ├── architecture.md      架构详解：异步轮询状态机 + 补丁 diff 解析
+│   └── apiproxy.patch.diff  精确补丁 diff（原始 vs 补丁后）
 ├── LICENSE                  MIT
 ├── .gitignore
 ├── preset/multimodal/       可分发的 agent preset

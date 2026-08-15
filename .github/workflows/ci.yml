@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    name: Syntax check (node --check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 三个 JS 文件都是 ESM（"type": "module" / package.json 声明）。
+      # node --check 依赖就近的 package.json 判定模块类型：
+      #   adapter/ 有自己的 package.json，preset 插件也有；
+      #   patch 下的完整文件没有就近 package.json，故以 --input-type=module 检查。
+      - name: Check adapter (ESM)
+        run: node --check adapter/index.js
+
+      - name: Check preset tools (ESM)
+        run: node --check preset/multimodal/plugins/multimodal-tools/index.js
+
+      - name: Check patched api-proxy (ESM, no nearby package.json)
+        run: node --input-type=module --check < patch/dsh-host-apiproxy-index.js

@@ -1,0 +1,188 @@
+diff --git a/dsh-host-apiproxy/lib/index.js b/dsh-host-apiproxy/lib/index.js
+--- a/dsh-host-apiproxy/lib/index.js	(pristine v0.1.0-rc.6)
++++ b/dsh-host-apiproxy/lib/index.js	(patched)
+@@ -1,8 +1,10 @@
+ import { Service } from "@deepseek-ai/cordis";
+ import z from "@deepseek-ai/schemastery";
+ import { randomUUID } from "node:crypto";
++import { execFile } from "node:child_process";
+ import { mkdir, stat } from "node:fs/promises";
+-import { dirname, extname } from "node:path";
++import { dirname, extname, join } from "node:path";
++import os from "node:os";
+ import { installModelSelection } from "@deepseek-ai/dsh-agent";
+ import { AttachmentError } from "@deepseek-ai/dsh-attachment";
+ import { ReasoningEffortId, contentHasImage, createUserMessage, errorChain, freezeMessage } from "@deepseek-ai/dsh-llm";
+@@ -908,6 +910,115 @@ function decodeBase64(data) {
+ 	if (data.length === 0 || decoded.toString("base64") !== data) throw new AttachmentError("Image upload is not canonical base64.", "INVALID_IMAGE_BASE64");
+ 	return new Uint8Array(decoded);
+ }
++// ── 图片自动识图降级（任意 OpenAI 风格多模态服务，经环境变量配置）────────
++// 当会话模型不接收图片输入时，prompt 里的图片不再被拒绝，而是逐张交给
++// 可配置的多模态模型识图，替换为文本描述后继续走正常文本流程。
++// API Key 不经代码与配置：优先读环境变量 MULTIMODAL_API_KEY；未设置时
++// 回退到本机 DPAPI 存储（Get-MultimodalKey.ps1），并在进程内缓存。
++const MULTIMODAL_BASE = process.env.MULTIMODAL_BASE_URL || "https://your-multimodal-provider.example.com/v1";
++const MULTIMODAL_VISION_MODEL = process.env.MULTIMODAL_VISION_MODEL || "your-vision-model";
++const MULTIMODAL_KEY_SCRIPT = join(os.homedir(), ".dsh", "secrets", "Get-MultimodalKey.ps1");
++const MULTIMODAL_DESCRIBE_TIMEOUT_MS = 120000;
++const MULTIMODAL_DESCRIBE_DEFAULT_QUESTION = "请详细描述这张图片的内容：画面主体、场景、颜色、光线与构图，以及图中出现的任何文字（如有，请逐字给出）。";
++let multimodalKeyCache = null;
++/** Find pwsh (PowerShell 7) in PATH; falls back to powershell.exe (5.1). */
++function findPwsh() {
++	try {
++		const { execSync } = require("child_process");
++		const w = execSync("where pwsh.exe", { encoding: "utf8", timeout: 3000, windowsHide: true }).trim();
++		if (w) return w.split("\n").find(p => !p.includes("WindowsApps")) || w.split("\n")[0];
++	} catch { /* not in PATH */ }
++	return null;
++}
++/** Resolve the multimodal API key (env first, then local DPAPI helper), cached in-process. */
++function getMultimodalKey() {
++	if (multimodalKeyCache) return multimodalKeyCache;
++	const envKey = process.env.MULTIMODAL_API_KEY;
++	if (envKey && envKey.startsWith("sk-")) { multimodalKeyCache = envKey; return envKey; }
++	return new Promise((resolve, reject) => {
++		const env = {
++			...process.env,
++			PSModulePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules" + (process.env.PSModulePath ? ";" + process.env.PSModulePath : "")
++		};
++		const psExe = findPwsh() || "powershell.exe";
++		const psEnv = psExe === "powershell.exe" ? {
++			...process.env,
++			PSModulePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules" + (process.env.PSModulePath ? ";" + process.env.PSModulePath : "")
++		} : process.env;
++		execFile(psExe, [
++			"-NoProfile",
++			"-NonInteractive",
++			"-ExecutionPolicy",
++			"Bypass",
++			"-Command",
++			"& '" + MULTIMODAL_KEY_SCRIPT.replace(/'/g, "''") + "'"
++		], { windowsHide: true, maxBuffer: 1024 * 1024, timeout: 20000, env: psEnv }, (err, stdout, stderr) => {
++			if (err) { reject(new Error("multimodal: 取 API Key 失败: " + (stderr || err.message))); return; }
++			const key = stdout.trim();
++			if (!key || !key.startsWith("sk-")) { reject(new Error("multimodal: 未能从 DPAPI 存储取回有效 API Key")); return; }
++			multimodalKeyCache = key;
++			resolve(key);
++		});
++	});
++}
++/** Describe one image via the configured vision model; returns the trimmed answer. */
++async function multimodalDescribeImage(dataUrl, question) {
++	const key = await getMultimodalKey();
++	const res = await fetch(MULTIMODAL_BASE + "/chat/completions", {
++		method: "POST",
++		headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
++		body: JSON.stringify({
++			model: MULTIMODAL_VISION_MODEL,
++			messages: [{
++				role: "user",
++				content: [
++					{ type: "text", text: question },
++					{ type: "image_url", image_url: { url: dataUrl, detail: "high" } }
++				]
++			}]
++		}),
++		signal: AbortSignal.timeout(MULTIMODAL_DESCRIBE_TIMEOUT_MS)
++	});
++	const text = await res.text();
++	let json = null;
++	try { json = JSON.parse(text); } catch { /* 非 JSON 响应 */ }
++	if (!res.ok) {
++		const detail = json && json.error ? (json.error.message || JSON.stringify(json.error)) : text.slice(0, 300);
++		throw new Error("multimodal api " + res.status + ": " + detail);
++	}
++	const answer = json && json.choices && json.choices[0] && json.choices[0].message
++		? json.choices[0].message.content : "";
++	if (typeof answer !== "string" || answer.trim() === "") throw new Error("multimodal api: 空响应");
++	return answer.trim();
++}
++/**
++* Convert a prompt containing image parts into a plain-text prompt: every image
++* is described by the configured vision model and inlined as text, so text-only
++* models can still "see" uploaded images. Throws on any describe failure.
++*/
++async function multimodalDescribeContent(content) {
++	const textParts = content.filter((part) => part.type === "text" && typeof part.text === "string" && part.text.trim() !== "");
++	const imageParts = content.filter((part) => part.type === "image");
++	const userText = textParts.map((part) => part.text.trim()).join("\n");
++	const question = userText !== "" ? userText : MULTIMODAL_DESCRIBE_DEFAULT_QUESTION;
++	const descriptions = [];
++	for (let i = 0; i < imageParts.length; i++) {
++		const part = imageParts[i];
++		const dataUrl = "data:" + (part.mediaType || "image/png") + ";base64," + part.data;
++		const answer = await multimodalDescribeImage(dataUrl, question);
++		descriptions.push("【图片 " + (i + 1) + "】" + answer);
++	}
++	const blocks = [];
++	if (userText !== "") blocks.push(userText);
++	if (descriptions.length > 0) {
++		blocks.push((userText !== "" ? "用户还上传了图片，图片内容如下：\n" : "用户上传了一张图片，图片内容如下：\n") + descriptions.join("\n\n"));
++	}
++	return [{ type: "text", text: blocks.join("\n\n") }];
++}
+ /** Validate one prompt as a batch before publishing any durable image object. */
+ async function durablePromptContent(ctx, content) {
+ 	if (content.every((part) => part.type === "text")) return content.map((part) => ({
+@@ -2838,15 +2949,6 @@ function createApiProxy(ctx, defaults) {
+ 			const hasImage = content.some((part) => part.type === "image");
+ 			const admit = async () => {
+ 				try {
+-					if (hasImage) {
+-						const current = selectionFor(agent).current;
+-						const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model);
+-						if (modelInfo.inputModalities !== void 0 && !modelInfo.inputModalities.includes("image")) return err(request, {
+-							code: "attachment-error",
+-							message: `Model "${current.model}" does not support image input.`,
+-							details: { reason: "MODEL_DOES_NOT_SUPPORT_IMAGES" }
+-						});
+-					}
+ 					const message = createUserMessage({
+ 						content: await durablePromptContent(ctx, content),
+ 						source
+@@ -2867,7 +2969,43 @@ function createApiProxy(ctx, defaults) {
+ 				}
+ 				return ok(request, { accepted: true });
+ 			};
+-			return hasImage ? serializeImageAdmission(agent, admit) : admit();
++			if (!hasImage) return admit();
++			const current = selectionFor(agent).current;
++			const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model);
++			if (modelInfo.inputModalities === void 0 || modelInfo.inputModalities.includes("image")) {
++				// 当前模型本身接收图片：同步原样准入。
++				return serializeImageAdmission(agent, admit);
++			}
++			// 异步 + 轮询：当前模型不接收图片。立即接受消息（避免同步识图让
++			// session.prompt 超过前端 30s unary 超时而被误报），后台调多模态模型识图，
++			// 完成后把文本描述作为用户消息注入会话；外部进度指示器可轮询 __multimodalDescribing。
++			const ws = ctx.get("webServer");
++			if (ws !== void 0) ws.__multimodalDescribing = true;
++			serializeImageAdmission(agent, async () => {
++				try {
++					const resolvedContent = await multimodalDescribeContent(content);
++					const message = createUserMessage({
++						content: await durablePromptContent(ctx, resolvedContent),
++						source
++					});
++					if (mode === "steer") agent.steer(message);
++					else agent.followup(message);
++				} catch (error) {
++					// 后台识图失败：注入一条文本错误消息，避免静默丢失用户输入。
++					const text = `图片自动识图失败：${error instanceof Error ? error.message : String(error)}`;
++					try {
++						const message = createUserMessage({
++							content: [{ type: "text", text }],
++							source
++						});
++						if (mode === "steer") agent.steer(message);
++						else agent.followup(message);
++					} catch (e2) { /* 会话已不可用则忽略 */ }
++				} finally {
++					if (ws !== void 0) ws.__multimodalDescribing = false;
++				}
++			});
++			return ok(request, { accepted: true });
+ 		},
+ 		async attachment(request) {
+ 			const { sessionId, attachmentId } = request.payload;
